@@ -53,9 +53,10 @@ async def chat_with_attachments(
     try:
         if top_k is not None:
             _retriever.max_results = int(top_k)
-        res = _chat.ask_with_attachments(user_id, message, files)
+        res = await _chat.ask_with_attachments(user_id, message, files)
         return {"reply": res["answer"]}
     except Exception as e:
+        print("chat_with_attachments error:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
