@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 對話記憶管理（單一使用者 Session 內的上下文）
 - 預設用 in-memory dict；可替換為 Redis/DB。

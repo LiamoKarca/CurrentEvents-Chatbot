@@ -212,3 +212,5 @@ data/processed/news_merge/_shards
 
 !*.gitkeep
 *.json
+
+backend/data/processed/news_merge/rag_storage_id/

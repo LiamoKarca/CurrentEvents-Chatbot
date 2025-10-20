@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, List

@@ -3,4 +3,4 @@ webdriver-manager==4.0.2
 beautifulsoup4==4.13.5
 python-multipart==0.0.20
 pymongo==4.15.3
-openai==2.3.0
+openai==2.5.0

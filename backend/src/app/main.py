@@ -1,5 +1,7 @@
-# -*- coding: utf-8 -*-
-# uvicorn backend.src.app.main:app --reload --log-level debug
+"""
+主應用程式入口
+$ uvicorn backend.src.app.main:app --reload --log-level debug
+"""
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware

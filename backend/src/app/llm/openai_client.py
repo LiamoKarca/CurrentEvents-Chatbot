@@ -1,5 +1,3 @@
-
-# -*- coding: utf-8 -*-
 """
 OpenAI API 客戶端包裝
 - 使用新版 Python SDK: `from openai import OpenAI`

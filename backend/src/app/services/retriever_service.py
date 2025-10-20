@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 檢索服務（基於 OpenAI Vector Store 的 file_search 工具）
 - 若未設定 OPENAI_VECTOR_STORE_IDS，將自動偵測最新（created_at 最大）的向量庫，作為預設使用。
