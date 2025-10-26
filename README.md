@@ -1,5 +1,5 @@
 # CurrentEvents-Chatbot
-新聞時事聊天機器人，利用人工智慧與OpenAI RAG技術，在資訊爆炸的時代，協助大眾快速判斷新聞真偽，並提供持續對話的互動體驗。
+以 Prompt Engineering 建構新聞時事聊天機器人， 利用 OpenAI 的 File_search 與 Web_search 技術，在資訊爆炸的時代，協助大眾快速判斷新聞真偽，並提供持續對話的互動體驗。
 
 # 新聞知識庫準備
 ```bash

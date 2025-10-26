@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .api.v1.routes_chat import router as chat_router  # 相對匯入，確保套件化路徑正確
+from backend.src.app.routers import auth as auth_router
+from backend.src.app.routers import user_chat as user_chat_router
 
 app = FastAPI(title="RAG Chatbot (FastAPI + OpenAI Vector Store)")
 
@@ -40,6 +42,11 @@ def healthz():
 
 # 掛載聊天 API
 app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
+
+# 掛載路由
+app.include_router(auth_router.router)
+app.include_router(user_chat_router.router)
+
 
 if __name__ == "__main__":
     import uvicorn

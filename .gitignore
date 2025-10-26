@@ -210,7 +210,15 @@ __marimo__/
 *.wdm-cache
 data/processed/news_merge/_shards
 
-!*.gitkeep
+# 忽略 .json 檔案
 *.json
 
+# 忽略 .csv 檔案
+*.csv
+
+# 忽略其他特定目錄
 backend/data/processed/news_merge/rag_storage_id/
+
+# 保持 .gitkeep 檔案被追蹤
+# 只要父目錄沒有被忽略，這條規則就會生效
+!*.gitkeep

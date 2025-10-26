@@ -4,3 +4,5 @@ beautifulsoup4==4.13.5
 python-multipart==0.0.20
 pymongo==4.15.3
 openai==2.5.0
+python-jose==3.5.0
+passlib==1.7.4
