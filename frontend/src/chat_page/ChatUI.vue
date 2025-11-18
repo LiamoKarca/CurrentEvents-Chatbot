@@ -1,796 +1,1217 @@
-<!-- utf-8-sig -->
-<template>
-  <div class="layout">
-    <!-- 左側：會話清單 -->
-    <aside
-      class="sidebar"
-      :class="{ hidden: sidebarHidden }"
-      aria-label="會話清單側欄"
-      :aria-hidden="sidebarHidden"
-    >
-      <header class="side-head">
-        <div class="brand">💬 ChatBot</div>
-        <div class="side-head-actions">
-          <button class="btn ghost xs" @click="onLogout" title="登出">登出</button>
-          <button class="btn ghost xs" @click="refreshList" :disabled="loadingList" title="重整清單">重整</button>
-        </div>
-      </header>
-
-      <div class="side-actions">
-        <button class="btn primary block" @click="newChat">＋ 新對話</button>
-        <!-- 自動保存；隱藏舊的手動保存按鈕 -->
-        <button class="btn block" style="display:none">💾 保存聊天</button>
-      </div>
-
-      <div class="side-list" v-if="history.length">
-        <a
-          v-for="item in history"
-          :key="item.chat_id"
-          href="#"
-          class="side-item"
-          :class="{ active: item.chat_id === currentChatId }"
-          @click.prevent="loadChat(item.chat_id)"
-          :title="`${item.title}（${item.created_at}）`"
-        >
-          <div class="row">
-            <div class="title">{{ item.title }}</div>
+  <!-- utf-8-sig -->
+  <template>
+    <div class="layout" :class="{ 'dark-mode': isDark }">
+      <!-- 左側：會話清單 -->
+      <aside
+        class="sidebar"
+        :class="{ hidden: sidebarHidden }"
+        aria-label="會話清單側欄"
+        :aria-hidden="sidebarHidden"
+      >
+        <header class="side-head">
+          <div class="brand">💬 ChatBot</div>
+          <div class="side-head-actions">
             <button
-              class="icon del"
-              title="刪除聊天"
-              @click.stop="deleteChat(item.chat_id)"
-              :disabled="deletingId === item.chat_id"
+              class="btn ghost xs"
+              @click="toggleTheme"
+              :title="isDark ? '切換為亮色主題' : '切換為暗色主題'"
             >
-              🗑
+              {{ isDark ? "暗色" : "亮色" }}
+            </button>
+            <button class="btn ghost xs" @click="onLogout" title="登出">
+              登出
+            </button>
+            <button
+              class="btn ghost xs"
+              @click="refreshList"
+              :disabled="loadingList"
+              title="重整清單"
+            >
+              重整
             </button>
           </div>
-          <div class="meta">{{ item.created_at }}</div>
-        </a>
-      </div>
+        </header>
 
-      <div v-else class="side-empty">尚無保存的聊天</div>
-
-      <!-- 左下角：目前登入帳號 -->
-      <footer class="side-foot">
-        <div class="me-label">登入帳號</div>
-        <div class="me-name" :title="me || '未登入'">{{ me || '（未登入）' }}</div>
-      </footer>
-    </aside>
-
-    <!-- 右側：聊天主畫面 -->
-    <main class="main">
-      <header class="topbar">
-        <button
-          class="btn ghost xs only-mobile"
-          @click="toggleSidebar"
-          :aria-expanded="!sidebarHidden"
-          aria-label="切換側欄"
-          title="切換側欄"
-        >
-          ☰
-        </button>
-        <div class="top-title">
-          <strong>{{ currentTitle || '新對話' }}</strong>
-        </div>
-        <div class="top-actions">
-          <!-- 頂部也能一鍵開新對話 -->
-          <button
-            class="btn ghost"
-            @click="newChat"
-            :disabled="loading"
-            title="新對話（Ctrl/Cmd + N）"
-          >
-            新對話
+        <!-- 左側上方：開新對話 -->
+        <section class="side-new">
+          <button class="btn primary block" @click="newChat" :disabled="loading">
+            ＋ 新對話
           </button>
-          <button class="btn ghost" @click="clearChat" :disabled="loading || messages.length === 0">
-            清除
-          </button>
-        </div>
-      </header>
+        </section>
 
-      <!-- 手機：側欄展開時顯示遮罩，點擊可關閉 -->
-      <div
-        v-if="!sidebarHidden"
-        class="backdrop only-mobile"
-        aria-hidden="true"
-        @click="closeSidebar"
-      ></div>
-
-      <section class="chat-body" ref="bodyEl">
-        <div v-if="messages.length === 0" class="empty">
-          開始輸入訊息與 ChatBot 對話吧！
-        </div>
-
-        <div
-          v-for="m in messages"
-          :key="m.id"
-          class="msg-row"
-          :class="m.role === 'bot' ? 'is-bot' : 'is-user'"
-        >
-          <div v-if="m.role === 'bot'" class="avatar bot">🤖</div>
-          <div class="bubble">
-            <div class="meta">
-              <span class="who">{{ m.role === 'bot' ? 'Bot' : '我' }}</span>
-              <span class="time">{{ m.time }}</span>
+        <!-- 左側中段：歷史清單 -->
+        <section class="side-list">
+          <div class="side-list-head">
+            <span>對話紀錄</span>
+            <span v-if="loadingList" class="muted">載入中…</span>
+          </div>
+          <div class="side-list-body" ref="listEl" aria-label="歷史對話清單">
+            <div v-if="history.length === 0 && !loadingList" class="empty-tip">
+              尚無對話紀錄，請先在右側開始一則新對話。
             </div>
-            <div class="text" v-text="m.text"></div>
+            <button
+              v-for="item in history"
+              :key="item.chat_id"
+              class="side-item"
+              :class="{ active: item.chat_id === currentChatId }"
+              type="button"
+              @click.prevent="loadChat(item.chat_id)"
+              :title="`${item.title}（${item.created_at}）`"
+            >
+              <div class="row">
+                <div class="title">{{ item.title }}</div>
+                <button
+                  class="icon del"
+                  title="刪除聊天"
+                  @click.stop="deleteChat(item.chat_id)"
+                  :disabled="deletingId === item.chat_id"
+                >
+                  🗑
+                </button>
+              </div>
+              <div class="meta">{{ item.created_at }}</div>
+            </button>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <footer class="composer">
-        <!-- 附件列（有選檔時顯示） -->
-        <div v-if="selectedFiles.length" class="attachments">
-          <div
-            v-for="(f, i) in selectedFiles"
-            :key="f.name + i"
-            class="chip"
-            :title="f.name"
-          >
-            <span class="chip-name">{{ f.name }}</span>
-            <button class="chip-x" @click="removeFile(i)" :disabled="loading">×</button>
+        <!-- 左下角：目前登入帳號 -->
+        <footer class="side-foot">
+          <div class="me-label">登入帳號</div>
+          <div class="me-name" :title="me || '未登入'">
+            {{ me || "（未登入）" }}
           </div>
-        </div>
+        </footer>
+      </aside>
 
-        <div class="composer-inner">
-          <button class="btn icon ghost" title="附加檔案" @click="openFilePicker" :disabled="loading">
-            +
-          </button>
-          <input ref="fileInput" type="file" class="file-input" multiple @change="onFilesSelected" />
-
-          <input
-            v-model="inputText"
-            class="composer-input"
-            type="text"
-            :placeholder="loading ? '處理中…' : '輸入訊息…'"
-            :disabled="loading"
-            @keyup.enter="send"
-          />
+      <!-- 右側：聊天主畫面 -->
+      <main class="main">
+        <header class="topbar">
           <button
-            class="btn send"
-            @click="send"
-            :disabled="loading || (!inputText.trim() && selectedFiles.length === 0)"
+            class="btn ghost xs only-mobile"
+            @click="toggleSidebar"
+            :aria-expanded="!sidebarHidden"
+            aria-label="切換側欄"
+            title="切換側欄"
           >
-            傳送
+            ☰
           </button>
-        </div>
-      </footer>
-    </main>
-  </div>
-</template>
+          <div class="top-title">
+            <strong>{{ currentTitle || "新對話" }}</strong>
+          </div>
+          <div class="top-actions">
+            <!-- 頂部也能一鍵開新對話 -->
+            <button
+              class="btn ghost"
+              @click="newChat"
+              :disabled="loading"
+              title="新對話（Ctrl/Cmd + N）"
+            >
+              新對話
+            </button>
+          </div>
+        </header>
 
-<script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted, computed } from "vue";
-import { useRouter } from "vue-router";
-import { API_BASE, USER_ID } from "@/config";
-import { api } from "@/services/api";
-import { logout as authLogout, authState } from "@/stores/auth";
+        <!-- 主體：訊息列表 + 輸入區 -->
+        <section class="chat-shell">
+          <!-- 訊息區：獨立滾動 -->
+          <div class="messages" ref="bodyEl" aria-label="對話內容">
+            <div v-if="messages.length === 0" class="empty-state">
+              <p class="empty-title">開始一段新的對話吧</p>
+              <p class="empty-text">
+                在下方輸入問題，或附加檔案讓系統一併分析。
+              </p>
+            </div>
 
-/** ====== JWT & /auth/me ====== */
-function getToken(): string | null {
-  try { return localStorage.getItem("token"); } catch { return null; }
-}
-async function fetchMe(): Promise<string | null> {
-  try {
-    const token = getToken();
-    if (!token) return null;
-    const resp = await fetch(`${API_BASE}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    return data?.username || null;
-  } catch { return null; }
-}
+            <article
+              v-for="m in messages"
+              :key="m.id"
+              class="msg"
+              :class="m.role === 'bot' ? 'assistant' : 'user'"
+            >
+              <header class="msg-head">
+                <span class="who">
+                  {{ m.role === "user" ? "使用者" : "系統" }}
+                </span>
+                <span class="time">{{ m.time }}</span>
+              </header>
+              <div class="msg-body">
+                <p class="msg-text">{{ m.text }}</p>
+              </div>
+            </article>
 
-/** ====== 型別 ====== */
-type Msg = { id: string; role: "user" | "bot"; text: string; time: string };
-type HistoryRow = { chat_id: string; title: string; created_at: string };
+            <!-- 請求中的 loading 狀態 -->
+            <div v-if="loading" class="msg assistant pending">
+              <div class="msg-head">
+                <span class="who">系統</span>
+                <span class="time">思考中…</span>
+              </div>
+              <div class="msg-body">
+                <span class="dot dot1"></span>
+                <span class="dot dot2"></span>
+                <span class="dot dot3"></span>
+              </div>
+            </div>
+          </div>
 
-const router = useRouter();
+          <!-- 底部輸入區：獨立固定在主畫面內部 -->
+          <footer class="composer">
+            <!-- 上方：附檔按鈕 + 已選清單 -->
+            <div class="attach-row">
+              <button
+                class="btn ghost xs"
+                type="button"
+                @click="openFilePicker"
+                title="附加檔案"
+              >
+                📎 附加檔案
+              </button>
+              <input
+                ref="fileInput"
+                type="file"
+                multiple
+                class="file-input-hidden"
+                @change="onFilesSelected"
+              />
+              <div class="chips" v-if="selectedFiles.length">
+                <span
+                  v-for="(f, i) in selectedFiles"
+                  :key="f.name + i"
+                  class="chip"
+                  :title="`${f.name}（${formatFileSize(f.size)}）`"
+                >
+                  {{ f.name }}
+                </span>
+                <button class="chip clear" @click="clearFiles" title="清除所有附檔">
+                  清除
+                </button>
+              </div>
+            </div>
 
-const messages = ref<Msg[]>([]);
-const inputText = ref("");
-const loading = ref(false);
-const bodyEl = ref<HTMLElement | null>(null);
-const fileInput = ref<HTMLInputElement | null>(null);
-const selectedFiles = ref<File[]>([]);
+            <!-- 下方：文字輸入 + 送出 -->
+            <div class="form-row">
+              <textarea
+                v-model="inputText"
+                class="input"
+                :placeholder="loading ? '處理中…' : '輸入問題，Shift+Enter 換行，Enter 送出…'"
+                rows="2"
+                @keydown.enter.exact.prevent="send"
+                @keydown.shift.enter.stop
+              ></textarea>
+              <button
+                class="btn primary send-btn"
+                type="button"
+                @click="send"
+                :disabled="loading || (!inputText.trim() && selectedFiles.length === 0)"
+                title="送出訊息"
+              >
+                送出
+              </button>
+            </div>
+          </footer>
+        </section>
+      </main>
+    </div>
+  </template>
 
-/** 重要：RWD 側欄狀態（手機預設收起） */
-const sidebarHidden = ref(true);
+  <script setup lang="ts">
+  import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
+  import { useRouter } from "vue-router";
+  import { API_BASE, USER_ID } from "@/config";
+  import { api } from "@/services/api";
+  import { logout as authLogout } from "@/stores/auth";
 
-/** 會話清單 */
-const history = ref<HistoryRow[]>([]);
-const loadingList = ref(false);
-const deletingId = ref<string | null>(null);
+  /** ====== JWT & /auth/me ====== */
+  function getToken(): string | null {
+    try {
+      return localStorage.getItem("token");
+    } catch {
+      return null;
+    }
+  }
 
-// 讓同一個瀏覽分頁期間保持 chat_id，不會因為某些流程重設而遺失
-const currentChatId = ref<string | null>(sessionStorage.getItem("currentChatId") || null);
-const currentTitle = ref<string | null>(null);
-
-/** 登入者 */
-const me = ref<string | null>(null);
-
-// 自動保存模式不再需要本地簽名去重
-
-function nowHM() {
-  const d = new Date();
-  const hh = `${d.getHours()}`.padStart(2, "0");
-  const mm = `${d.getMinutes()}`.padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function addMessage(role: "user" | "bot", text: string) {
-  messages.value.push({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    role,
-    text,
-    time: nowHM(),
-  });
-}
-
-function openFilePicker() { fileInput.value?.click(); }
-function onFilesSelected(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const files = input.files;
-  if (!files || files.length === 0) return;
-  selectedFiles.value = Array.from(files);
-  input.value = ""; // 允許重選
-}
-function removeFile(index: number) { selectedFiles.value.splice(index, 1); }
-
-/** ====== 後端：聊天 ====== */
-async function send() {
-  if (loading.value) return;
-  const text = inputText.value.trim();
-  if (!text && selectedFiles.value.length === 0) return;
-
-  if (text) addMessage("user", text);
-  if (!text && selectedFiles.value.length > 0) addMessage("user", "（附帶檔案）");
-
-  loading.value = true;
-  try {
-    let reply = "（無回覆內容）";
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    if (selectedFiles.value.length > 0) {
-      const fd = new FormData();
-      fd.append("user_id", USER_ID);
-      fd.append("message", text);
-      // ✅ 告訴後端這次對話屬於哪個原檔（兩個鍵同送以兼容）
-      if (currentChatId.value) {
-        fd.append("chat_id", currentChatId.value);
-        fd.append("conversation_id", currentChatId.value);
-      }
-      selectedFiles.value.forEach((f) => fd.append("files", f));
-      const resp = await fetch(`${API_BASE}/api/v1/chat/with-attachments`, { method: "POST", headers, body: fd });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      reply = typeof data?.reply === "string" ? data.reply : reply;
-      // ✅ 後端若回傳 chat_id/title，就即時更新並固化
-      const rid = pickChatId(data);
-      if (rid) {
-        currentChatId.value = rid;
-        sessionStorage.setItem("currentChatId", rid);
-      }
-      const rtitle = pickTitle(data, currentTitle.value);
-      if (rtitle) currentTitle.value = rtitle;
-      selectedFiles.value = [];
-    } else {
-      const resp = await fetch(`${API_BASE}/api/v1/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({
-          user_id: USER_ID,
-          message: text,
-          // ✅ 同步帶上 chat_id / conversation_id，避免後端另開新檔
-          chat_id: currentChatId.value || undefined,
-          conversation_id: currentChatId.value || undefined,
-        }),
+  async function fetchMe(): Promise<string | null> {
+    try {
+      const token = getToken();
+      if (!token) return null;
+      const resp = await fetch(`${API_BASE}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) return null;
       const data = await resp.json();
-      reply = typeof data?.reply === "string" ? data.reply : reply;
-      // ✅ 吃回傳的 chat_id/title（若後端有回）
-      const rid = pickChatId(data);
-      if (rid) {
-        currentChatId.value = rid;
-        sessionStorage.setItem("currentChatId", rid);
-      }
-      const rtitle = pickTitle(data, currentTitle.value);
-      if (rtitle) currentTitle.value = rtitle;
+      return data?.username || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** ====== 型別 ====== */
+  type Msg = { id: string; role: "user" | "bot"; text: string; time: string };
+  type HistoryRow = { chat_id: string; title: string; created_at: string };
+
+  const router = useRouter();
+
+  const messages = ref<Msg[]>([]);
+  const inputText = ref("");
+  const loading = ref(false);
+  const bodyEl = ref<HTMLElement | null>(null);
+  const fileInput = ref<HTMLInputElement | null>(null);
+  const selectedFiles = ref<File[]>([]);
+
+  /** RWD 側欄狀態（手機預設收起） */
+  const sidebarHidden = ref(true);
+
+  /** 亮／暗色主題 */
+  const isDark = ref(false);
+
+  /** 會話清單 */
+  const history = ref<HistoryRow[]>([]);
+  const loadingList = ref(false);
+  const deletingId = ref<string | null>(null);
+
+  // 讓同一個瀏覽分頁期間保持 chat_id
+  const currentChatId = ref<string | null>(
+    sessionStorage.getItem("currentChatId") || null,
+  );
+  const currentTitle = ref<string | null>(null);
+
+  /** 登入者 */
+  const me = ref<string | null>(null);
+
+  function nowHM(): string {
+    const d = new Date();
+    const hh = `${d.getHours()}`.padStart(2, "0");
+    const mm = `${d.getMinutes()}`.padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function formatFileSize(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function addMessage(role: "user" | "bot", text: string): void {
+    messages.value.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role,
+      text,
+      time: nowHM(),
+    });
+  }
+
+  function openFilePicker(): void {
+    fileInput.value?.click();
+  }
+
+  function onFilesSelected(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    const files = input.files;
+    if (!files || files.length === 0) return;
+    selectedFiles.value = Array.from(files);
+    input.value = "";
+  }
+
+  /** 一鍵清除所有附檔 */
+  function clearFiles(): void {
+    selectedFiles.value = [];
+    if (fileInput.value) {
+      fileInput.value.value = "";
+    }
+  }
+
+  /** 單一檔案刪除（目前模板未用，但保留以後擴充） */
+  function removeFile(index: number): void {
+    selectedFiles.value.splice(index, 1);
+  }
+
+  /** ====== 後端：聊天 ====== */
+  async function send(): Promise<void> {
+    if (loading.value) return;
+    const text = inputText.value.trim();
+    if (!text && selectedFiles.value.length === 0) return;
+
+    if (text) addMessage("user", text);
+    if (!text && selectedFiles.value.length > 0) {
+      addMessage("user", "（附帶檔案）");
     }
 
-    if (text) inputText.value = "";
-    addMessage("bot", reply);
-    // ✅ 送出即自動保存（建立或續寫原檔）
-    await autoSaveUpsert();
-    await refreshList();
-  } catch (err) {
-    addMessage("bot", "抱歉，剛剛處理時出了點問題。");
-  } finally {
-    loading.value = false;
+    loading.value = true;
+    try {
+      let reply = "（無回覆內容）";
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      if (selectedFiles.value.length > 0) {
+        const fd = new FormData();
+        fd.append("user_id", USER_ID);
+        fd.append("message", text);
+        if (currentChatId.value) {
+          fd.append("chat_id", currentChatId.value);
+          fd.append("conversation_id", currentChatId.value);
+        }
+        selectedFiles.value.forEach((f) => fd.append("files", f));
+        const resp = await fetch(`${API_BASE}/api/v1/chat/with-attachments`, {
+          method: "POST",
+          headers,
+          body: fd,
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        reply = typeof data?.reply === "string" ? data.reply : reply;
+        const rid = pickChatId(data);
+        if (rid) {
+          currentChatId.value = rid;
+          sessionStorage.setItem("currentChatId", rid);
+        }
+        const rtitle = pickTitle(data, currentTitle.value);
+        if (rtitle) currentTitle.value = rtitle;
+        clearFiles();
+      } else {
+        const resp = await fetch(`${API_BASE}/api/v1/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({
+            user_id: USER_ID,
+            message: text,
+            chat_id: currentChatId.value || undefined,
+            conversation_id: currentChatId.value || undefined,
+          }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        reply = typeof data?.reply === "string" ? data.reply : reply;
+        const rid = pickChatId(data);
+        if (rid) {
+          currentChatId.value = rid;
+          sessionStorage.setItem("currentChatId", rid);
+        }
+        const rtitle = pickTitle(data, currentTitle.value);
+        if (rtitle) currentTitle.value = rtitle;
+      }
+
+      if (text) inputText.value = "";
+      addMessage("bot", reply);
+      await autoSaveUpsert();
+      await refreshList();
+    } catch {
+      addMessage("bot", "抱歉，剛剛處理時出了點問題。");
+    } finally {
+      loading.value = false;
+    }
   }
-}
 
-/** 清空當前聊天（不影響已保存的歷史） */
-async function clearChat() {
-  messages.value = [];
-  inputText.value = "";
-  selectedFiles.value = [];
-  currentChatId.value = null;
-  sessionStorage.removeItem("currentChatId");
-  currentTitle.value = null;
+  /** 清空當前聊天（不影響已保存的歷史） */
+  async function clearChat(): Promise<void> {
+    messages.value = [];
+    inputText.value = "";
+    selectedFiles.value = [];
+    currentChatId.value = null;
+    sessionStorage.removeItem("currentChatId");
+    currentTitle.value = null;
 
-  try {
-    const token = getToken();
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    await fetch(`${API_BASE}/api/v1/memory/clear`, { method: "POST", headers, body: JSON.stringify({ user_id: USER_ID }) });
-  } catch { /* 靜默 */ }
-}
-
-/** 新對話：重置右側編輯區 */
-function newChat() { clearChat(); }
-
-/** 鍵盤快捷鍵：Ctrl/Cmd + N 開新對話 + Esc 關側欄（手機） */
-function onKeydown(e: KeyboardEvent) {
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  const hitNew = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "n";
-  if (hitNew) {
-    e.preventDefault();
-    if (!loading.value) newChat();
-    return;
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      await fetch(`${API_BASE}/api/v1/memory/clear`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ user_id: USER_ID }),
+      });
+    } catch {
+      // 靜默處理
+    }
   }
-  if (e.key === "Escape") closeSidebar();
-}
 
-function toggleSidebar() {
-  sidebarHidden.value = !sidebarHidden.value;
-}
-function closeSidebar() {
-  sidebarHidden.value = true;
-}
-
-// ===== Lifecycle =====
-
-/** 自動保存（upsert）：第一次建立；其後一律續寫同一 chat_id */
-async function autoSaveUpsert() {
-  if (messages.value.length === 0) return;
-  const payload = messages.value.map((m) => ({
-    role: m.role === "bot" ? "assistant" : "user",
-    content: m.text,
-  }));
-  if (currentChatId.value) {
-    // 續寫：不傳 title
-    const r = await api.chats.save(payload, undefined, currentChatId.value);
-    // 容錯抓 id/title
-    const id = pickChatId(r) || currentChatId.value;
-    const title = pickTitle(r, currentTitle.value);
-    currentChatId.value = id;
-    currentTitle.value = title;
-    if (id) sessionStorage.setItem("currentChatId", id);
-  } else {
-    // 首次：用第一則使用者訊息當標題
-    const firstUser = messages.value.find((m) => m.role === "user");
-    const titleSeed = (firstUser?.text || "新對話").trim().slice(0, 20);
-    const r = await api.chats.save(payload, titleSeed, undefined);
-    const id = pickChatId(r);
-    const title = pickTitle(r, titleSeed);
-    currentChatId.value = id;
-    currentTitle.value = title;
-    if (id) sessionStorage.setItem("currentChatId", id);
+  /** 新對話：重置右側編輯區 */
+  function newChat(): void {
+    clearChat();
   }
-}
 
-/** 刪除某筆聊天（需要後端提供 DELETE /api/v1/chats/{chat_id}） */
-async function deleteChat(chatId: string) {
-  const ok = confirm("確定要刪除此筆聊天紀錄嗎？");
-  if (!ok) return;
-  deletingId.value = chatId;
-  try {
-    if (typeof api.chats.delete === "function") {
-      await api.chats.delete(chatId);
-    } else {
-      // 若尚未實作 api.chats.delete，提供提示
-      alert("後端未提供刪除 API：請新增 DELETE /api/v1/chats/{chat_id}");
+  /** 鍵盤快捷鍵：Ctrl/Cmd + N 開新對話 + Esc 關側欄（手機） */
+  function onKeydown(e: KeyboardEvent): void {
+    const isMac = navigator.platform.toLowerCase().includes("mac");
+    const hitNew =
+      (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "n";
+    if (hitNew) {
+      e.preventDefault();
+      if (!loading.value) newChat();
       return;
     }
-    // UI 刷新
-    if (currentChatId.value === chatId) {
-      clearChat();
-    }
-    await refreshList();
-  } catch (e) {
-    alert("刪除失敗，請稍後再試。");
-  } finally {
-    deletingId.value = null;
+    if (e.key === "Escape") closeSidebar();
   }
-}
 
-/** 讀取歷史列表 */
-async function refreshList() {
-  loadingList.value = true;
-  try {
-    const r = await api.chats.list();
-    // 去重 + 排序（新到舊）
-    const map = new Map<string, HistoryRow>();
-    for (const x of (r.items || [])) {
-      if (!x?.chat_id) continue;
-      if (!map.has(x.chat_id)) {
-        map.set(x.chat_id, {
-          chat_id: x.chat_id,
-          title: x.title,
-          created_at: x.created_at,
-        });
-      }
-    }
-    history.value = Array.from(map.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  } finally {
-    loadingList.value = false;
+  function toggleSidebar(): void {
+    sidebarHidden.value = !sidebarHidden.value;
   }
-}
 
-/** 載入某筆聊天 */
-async function loadChat(chatId: string) {
-  try {
-    const data = await api.chats.get(chatId);
-    const items: Msg[] = (data.messages || []).map((m: any) => ({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      role: m.role === "assistant" ? "bot" : "user",
-      text: m.content,
-      time: nowHM(),
+  function closeSidebar(): void {
+    sidebarHidden.value = true;
+  }
+
+  /** 自動保存（upsert）：第一次建立；其後一律續寫同一 chat_id */
+  async function autoSaveUpsert(): Promise<void> {
+    if (messages.value.length === 0) return;
+    const payload = messages.value.map((m) => ({
+      role: m.role === "bot" ? "assistant" : "user",
+      content: m.text,
     }));
-    messages.value = items;
-    currentChatId.value = data.chat_id || chatId;
-    currentTitle.value = data.title || null;
-    await nextTick();
-    if (bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight;
-  } catch (e) {
-    // 可加錯誤提示
+    if (currentChatId.value) {
+      const r = await api.chats.save(payload, undefined, currentChatId.value);
+      const id = pickChatId(r) || currentChatId.value;
+      const title = pickTitle(r, currentTitle.value);
+      currentChatId.value = id;
+      currentTitle.value = title;
+      if (id) sessionStorage.setItem("currentChatId", id);
+    } else {
+      const firstUser = messages.value.find((m) => m.role === "user");
+      const titleSeed = (firstUser?.text || "新對話").trim().slice(0, 20);
+      const r = await api.chats.save(payload, titleSeed, undefined);
+      const id = pickChatId(r);
+      const title = pickTitle(r, titleSeed);
+      currentChatId.value = id;
+      currentTitle.value = title;
+      if (id) sessionStorage.setItem("currentChatId", id);
+    }
   }
-}
 
-/** 後端回傳容錯：擷取 chat_id 與 title（可能長不一樣的鍵名） */
-function pickChatId(resp: any): string | null {
-  return (
-    resp?.meta?.chat_id ??
-    resp?.chat_id ??
-    resp?.id ??
-    resp?.meta?.id ??
-    null
+  /** 刪除某筆聊天 */
+  async function deleteChat(chatId: string): Promise<void> {
+    const ok = confirm("確定要刪除此筆聊天紀錄嗎？");
+    if (!ok) return;
+    deletingId.value = chatId;
+    try {
+      if (typeof api.chats.delete === "function") {
+        await api.chats.delete(chatId);
+      } else {
+        alert("後端未提供刪除 API：請新增 DELETE /api/v1/chats/{chat_id}");
+        return;
+      }
+      if (currentChatId.value === chatId) {
+        clearChat();
+      }
+      await refreshList();
+    } catch {
+      alert("刪除失敗，請稍後再試。");
+    } finally {
+      deletingId.value = null;
+    }
+  }
+
+  /** 讀取歷史列表 */
+  async function refreshList(): Promise<void> {
+    loadingList.value = true;
+    try {
+      const r = await api.chats.list();
+      const map = new Map<string, HistoryRow>();
+      for (const x of r.items || []) {
+        if (!x?.chat_id) continue;
+        if (!map.has(x.chat_id)) {
+          map.set(x.chat_id, {
+            chat_id: x.chat_id,
+            title: x.title,
+            created_at: x.created_at,
+          });
+        }
+      }
+      history.value = Array.from(map.values()).sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    } finally {
+      loadingList.value = false;
+    }
+  }
+
+  /** 載入某筆聊天 */
+  async function loadChat(chatId: string): Promise<void> {
+    try {
+      const data = await api.chats.get(chatId);
+      const items: Msg[] = (data.messages || []).map((m: any) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: m.role === "assistant" ? "bot" : "user",
+        text: m.content,
+        time: nowHM(),
+      }));
+      messages.value = items;
+      currentChatId.value = data.chat_id || chatId;
+      currentTitle.value = data.title || null;
+      await nextTick();
+      if (bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight;
+    } catch {
+      // 需時再補錯誤提示
+    }
+  }
+
+  /** 後端回傳容錯：擷取 chat_id 與 title */
+  function pickChatId(resp: any): string | null {
+    return (
+      resp?.meta?.chat_id ??
+      resp?.chat_id ??
+      resp?.id ??
+      resp?.meta?.id ??
+      null
+    );
+  }
+
+  function pickTitle(resp: any, fallback?: string | null): string | null {
+    return resp?.meta?.title ?? resp?.title ?? fallback ?? null;
+  }
+
+  /** 登出 */
+  async function onLogout(): Promise<void> {
+    const ok = confirm("確定要登出嗎？");
+    if (!ok) return;
+    authLogout();
+    await router.replace({ path: "/login" });
+  }
+
+  /** 自動捲到底 */
+  watch(
+    () => messages.value.length,
+    async () => {
+      await nextTick();
+      if (bodyEl.value) {
+        bodyEl.value.scrollTop = bodyEl.value.scrollHeight;
+      }
+    },
   );
-}
-function pickTitle(resp: any, fallback?: string | null): string | null {
-  return resp?.meta?.title ?? resp?.title ?? fallback ?? null;
-}
 
-/** 登出 */
-async function onLogout() {
-  const ok = confirm("確定要登出嗎？");
-  if (!ok) return;
-  // 1) 清除 token + auth 狀態
-  authLogout();
-  // 2) 以 replace 前往登入頁，避免回上一頁又回到受保護頁面
-  await router.replace({ path: "/login" });
-}
-
-/** 自動捲到底 */
-watch(
-  () => messages.value.length,
-  async () => {
-    await nextTick();
-    if (bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight;
+  /** 主題切換 */
+  function toggleTheme(): void {
+    isDark.value = !isDark.value;
+    try {
+      const mode = isDark.value ? "dark" : "light";
+      localStorage.setItem("theme", mode);
+    } catch {
+      // ignore
+    }
   }
-);
 
-onMounted(async () => {
-  me.value = await fetchMe();
-  await refreshList();
-  // 綁定快捷鍵
-  window.addEventListener("keydown", onKeydown);
-  // 若有既存 chat_id 且目前右側有訊息，確保續寫同檔
-  const persisted = sessionStorage.getItem("currentChatId");
-  if (persisted && !currentChatId.value) currentChatId.value = persisted;
-});
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
-</script>
+  onMounted(async () => {
+    try {
+      const stored = localStorage.getItem("theme");
+      isDark.value = stored === "dark";
+    } catch {
+      isDark.value = false;
+    }
 
-<style scoped>
-/* ===== 色票（亮色清爽） ===== */
-:root {
-  --bg: #f6f8fb;
-  --panel: #ffffff;
-  --border: #d1d5db;     /* 全域基本邊線 */
-  --divider: #1f2937;    /* 分界線（更明確、深色 2px） */
-  --text: #0f172a;
-  --muted: #64748b;
-  --primary: #2563eb;
-  --primary-weak: #93c5fd;
-  --shadow: 0 12px 28px rgba(2, 6, 23, 0.08), 0 2px 8px rgba(2, 6, 23, 0.06);
-}
+    me.value = await fetchMe();
+    await refreshList();
+    window.addEventListener("keydown", onKeydown);
+    const persisted = sessionStorage.getItem("currentChatId");
+    if (persisted && !currentChatId.value) currentChatId.value = persisted;
+  });
 
-/* ===== 版面 ===== */
-.layout {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  /* 使用動態視窗高（手機位址列不影響），並給 100vh 後備 */
-  height: 100dvh;
-  height: 100vh;
-  background: var(--bg);
-  position: relative;
-}
-/* 明確分界線：2px 深色，整頁一致 */
-.sidebar {
-  background: var(--panel);
-  border-right: 2px solid var(--divider);
-  /* 頂/側內距；底部不再需要預留空間 */
-  padding: 14px 12px 12px;
-  display: grid;
-  /* 新：四列 → header / actions / list(可捲) / foot(固定) */
-  grid-template-rows: auto auto minmax(0,1fr) auto;
-  gap: 12px;
-  position: relative;
-  z-index: 10;
-  height: 100%;
-  /* 由清單自己捲動，不讓整個側欄捲動以免跟主畫面搶滾動 */
-  overflow: hidden;
-}
+  onUnmounted(() => {
+    window.removeEventListener("keydown", onKeydown);
+  });
+  </script>
 
-/* .sidebar.hidden：桌機不套用隱藏，交由 RWD 區塊處理 */
+  <style scoped>
+  /* ===== 色票（亮色清爽） ===== */
+  :root {
+    --bg: #f6f8fb;
+    --panel: #ffffff;
+    --border: #d1d5db;
+    --divider: #1f2937;
+    --text: #0f172a;
+    --muted: #64748b;
+    --primary: #2563eb;
+    --primary-weak: #93c5fd;
+    --shadow: 0 12px 28px rgba(2, 6, 23, 0.08),
+      0 2px 8px rgba(2, 6, 23, 0.06);
+  }
 
-.side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.brand {
-  font-weight: 800;
-  letter-spacing: .2px;
-}
-.side-head-actions { display: inline-flex; gap: 8px; }
-
-.side-actions { display: grid; gap: 8px; }
-
-/* ✅ 左側：只有清單區可捲動 */
-.side-list {
-  overflow-y: auto;
-  padding-right: 6px;
-  min-height: 0; /* 關鍵：允許在 grid/flex 內縮小以產生滾動 */
-}
-
-/* ✅ 右側：主聊天區保持固定高度並獨立滾動 */
-.chat-body {
-  flex: 1;
-  overflow-y: auto;
-  max-height: calc(100vh - 130px); /* 頂部與輸入框高度總和 */
-  scroll-behavior: smooth;
-}
-
-
-.side-item {
-  display: block;
-  padding: 10px 10px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  color: var(--text);
-  text-decoration: none;
-  background: #fff;
-  box-shadow: var(--shadow);
-  margin-bottom: 10px;
-}
-.side-item .row {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-}
-.side-item .title { font-weight: 700; font-size: 14px; }
-.side-item .meta { font-size: 12px; color: var(--muted); }
-.side-item .icon.del {
-  all: unset; cursor: pointer; font-size: 14px; line-height: 1;
-  padding: 2px 6px; border-radius: 8px; color: #b91c1c;
-}
-.side-item .icon.del:disabled { opacity: .5; cursor: not-allowed; }
-.side-item:hover { border-color: var(--primary-weak); }
-.side-item.active {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-}
-
-.side-empty {
-  color: var(--muted);
-  font-size: 14px;
-  display: grid;
-  place-content: center;
-}
-
-/* 左下角：登入帳號作為 Grid 最後一列，天然固定 */
-.side-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24px 24px;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
-}
-.me-label { font-size: 12px; color: var(--muted); }
-.me-name {
-  max-width: 170px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-/* 右側主區 */
-.main {
-  display: grid;
-  /* 只讓中間這列可伸縮並承擔滾動 */
-  grid-template-rows: auto minmax(0,1fr) auto;
-  height: 100%;
-  overflow: hidden; /* 自己不捲，避免把 topbar/composer 捲走 */
-  position: relative;
-}
-
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  position: sticky;  /* 固定在主欄頂部 */
-  top: 0;
-  z-index: 5;
-}
-.top-title { font-weight: 800; }
-
-/* 主體區域（承擔滾動） */
-.chat-body {
-  padding: 16px;
-  overflow-y: auto; /* ✅ 只有聊天內容會滾動 */
-  scroll-behavior: smooth;
-  min-height: 0;    /* 關鍵：否則會把父層撐高，導致整頁在滾 */
-}
-.empty { color: var(--muted); text-align: center; padding: 40px 0; }
-
-.msg-row { display: flex; gap: 10px; margin: 10px 0; }
-.msg-row.is-user { justify-content: flex-end; }
-
-.avatar.bot {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: #eef2ff; color: #1d4ed8;
-  display: grid; place-items: center;
-  border: 1px solid #dbeafe;
-}
-
-.bubble {
-  max-width: min(760px, 78vw);
-  border-radius: 14px;
-  padding: 10px 12px;
-  background: #ffffff;
-  color: var(--text);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-}
-.msg-row.is-user .bubble {
-  background: #0f172a;
-  color: #f8fafc;
-  border-color: #0b1324;
-}
-
-.meta {
-  font-size: 12px;
-  opacity: 0.7;
-  margin-bottom: 4px;
-  display: flex;
-  gap: 8px;
-}
-.text { white-space: pre-wrap; word-break: break-word; }
-
-/* Composer */
-.composer {
-  padding: 12px 16px 18px;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-  /* 不需要 fixed；在 grid 第三列自然固定。若需更保險可打開：
-  position: sticky; bottom: 0;
-  */
-}
-.attachments {
-  display: flex; flex-wrap: wrap; gap: 8px;
-  padding: 8px 0 10px;
-}
-.chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 60%; padding: 4px 8px;
-  border-radius: 999px; background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-}
-.chip-name {
-  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.chip-x {
-  all: unset; cursor: pointer; font-weight: 700; padding: 0 4px; color: #334155;
-}
-
-.composer-inner { display: flex; align-items: center; gap: 10px; }
-.file-input { display: none; }
-
-.composer-input {
-  flex: 1; height: 44px; padding: 0 12px;
-  border-radius: 12px; border: 1px solid #cbd5e1;
-  background: #ffffff; color: #111111; outline: none;
-}
-.composer-input::placeholder { color: #64748b; }
-
-.btn {
-  padding: 8px 12px;
-  border-radius: 12px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-.btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
-.btn.ghost { background: transparent; color: #334155; border-color: #cbd5e1; }
-.btn.xs { height: 30px; padding: 0 10px; font-size: 12px; }
-.btn.block { width: 100%; }
-.btn:disabled { opacity: .6; cursor: not-allowed; }
-
-/* 手機：側欄可滑入滑出；漢堡與遮罩顯示 */
-.only-mobile { display: none; }
-
-@media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
-
-  /* 讓側欄浮在畫面上，由 transform 控制顯/隱 */
-  .sidebar {
-    position: fixed;
-    top: 0; left: 0;
-    width: 280px;
+  /* ===== 版面 ===== */
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
     height: 100dvh;
     height: 100vh;
-    transform: translateX(0);
-    transition: transform 0.28s ease;
-    z-index: 60; /* 高於內容、低於漢堡鈕 */
-    overflow: hidden; /* 由內部 side-list 捲動 */
-  }
-  .sidebar.hidden {
-    transform: translateX(-100%);
+    background: var(--bg);
+    position: relative;
   }
 
-  .only-mobile { display: inline-flex; }
-
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,.45);
-    z-index: 50; /* 在側欄之下、內容之上 */
+  .layout.dark-mode {
+    --bg: #020617;
+    --panel: #020617;
+    --border: #4b5563;
+    --divider: #e5e7eb;
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --primary: #60a5fa;
+    --primary-weak: #1d4ed8;
+    --shadow: 0 12px 28px rgba(15, 23, 42, 0.7),
+      0 2px 8px rgba(15, 23, 42, 0.5);
+    color: var(--text);
   }
 
-
-/* === 桌機版：左欄與右欄之間顯示黑色分隔線 === */
-@media (min-width: 861px) {
+  /* 左側：側欄固定，獨立滾動 */
   .sidebar {
-    border-right: 2px solid #000; /* 黑線 */
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: 2px 0 4px rgba(15, 23, 42, 0.05);
+    max-height: 100%;
   }
-}
 
-/* 更柔和的陰影分界，而不是純黑直線 */
-@media (min-width: 861px) {
-  .sidebar { border-right: none; box-shadow: 2px 0 0 #000 inset; }
-}
+  /* 讓側欄內部本身可滾動，而不是整頁滾動 */
+  .sidebar,
+  .main {
+    overflow: hidden;
+  }
 
-}
+  .side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .brand {
+    font-weight: 800;
+    letter-spacing: 0.2px;
+  }
+  .side-head-actions {
+    display: inline-flex;
+    gap: 8px;
+  }
+  .side-head {
+    padding: 12px 12px 8px;
+    border-bottom: 1px solid var(--border);
+  }
 
-/* ===== 全域：阻止整頁滾動，只讓左右欄自己滾 ===== */
-:global(html), :global(body), :global(#app) {
-  height: 100%;
-  overflow: hidden;    /* 頁面不滾，避免 topbar 消失 */
-}
+  /* 新對話區塊 */
+  .side-new {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .side-new .btn.primary {
+    background: linear-gradient(135deg, #e5edff, #d5e4ff);
+    color: #374151; /* 左側新對話：深灰字 */
+    border-color: #cbd5f5;
+    box-shadow: none;
+  }
+  .layout.dark-mode .side-new .btn.primary {
+    background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+    color: #f9fafb;
+    border-color: #1d4ed8;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  }
 
-</style>
+  /* 中段清單：自身滾動 */
+  .side-list {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .side-list-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 12px 4px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .side-list-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 0 6px 0 8px;
+  }
+
+  /* 左側 item 設計 */
+  .side-item {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    transition:
+      background 0.15s ease,
+      transform 0.05s ease;
+  }
+  .side-item:hover {
+    background: rgba(148, 163, 184, 0.16);
+  }
+  .side-item.active {
+    background: rgba(37, 99, 235, 0.08);
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.18);
+  }
+  .side-item .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .side-item .title {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+  .side-item .meta {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .icon.del {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    opacity: 0.6;
+  }
+  .icon.del:hover {
+    opacity: 1;
+  }
+
+  /* 左下角目前登入帳號 */
+  .side-foot {
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(148, 163, 184, 0.05);
+  }
+  .me-label {
+    margin-bottom: 2px;
+  }
+  .me-name {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+
+  /* 右側主畫面 */
+  .main {
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+  }
+
+  /* 頂部列 */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--divider);
+    background: rgba(248, 250, 252, 0.96);
+    backdrop-filter: blur(12px);
+  }
+  .layout.dark-mode .topbar {
+    background: rgba(15, 23, 42, 0.97);
+    border-bottom-color: #4b5563;
+  }
+  .top-title {
+    flex: 1;
+    padding: 0 12px;
+    font-size: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+  .top-title strong {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* 主體區：上下切成 messages + composer */
+  .chat-shell {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 10px 14px 12px;
+    gap: 10px;
+  }
+
+  /* 訊息列表：獨立滾動容器 */
+  .messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 4px 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: radial-gradient(circle at top, #ffffff, #f3f4f6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  .layout.dark-mode .messages {
+    background: radial-gradient(circle at top, #020617, #020617);
+    border-color: #4b5563;
+    box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.9);
+  }
+
+  /* 空狀態 */
+  .empty-state {
+    padding: 40px 16px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .empty-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .empty-text {
+    font-size: 14px;
+  }
+
+  /* 一則訊息 */
+  .msg {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(248, 250, 252, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.45);
+  }
+  .msg.user {
+    border-color: rgba(59, 130, 246, 0.5);
+    background: linear-gradient(120deg, #eff6ff, #e0f2fe);
+  }
+  .msg.assistant {
+    border-color: rgba(148, 163, 184, 0.6);
+  }
+  /* 暗色訊息泡泡 */
+  .layout.dark-mode .msg {
+    background: #020617;
+    border-color: #4b5563;
+  }
+  .layout.dark-mode .msg.user {
+    background: linear-gradient(120deg, #0f172a, #020617);
+    border-color: #1d4ed8;
+  }
+  .layout.dark-mode .msg.assistant {
+    background: #020617;
+    border-color: #4b5563;
+  }
+
+  .msg-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .msg-head .who {
+    font-weight: 600;
+    color: #1f2933;
+  }
+  .msg-head .time {
+    color: var(--muted);
+  }
+  .layout.dark-mode .msg-head .who {
+    color: #e5e7eb;
+  }
+  .layout.dark-mode .msg-head .time {
+    color: #9ca3af;
+  }
+  .msg-body {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .msg-text {
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+  .layout.dark-mode .msg-text {
+    color: #e5e7eb;
+  }
+
+  /* loading dots */
+  .msg.assistant.pending {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .msg.assistant.pending .msg-body {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #9ca3af;
+    animation: bounce 1s infinite ease-in-out;
+  }
+  .dot2 {
+    animation-delay: 0.15s;
+  }
+  .dot3 {
+    animation-delay: 0.3s;
+  }
+  @keyframes bounce {
+    0%,
+    80%,
+    100% {
+      transform: scale(0);
+      opacity: 0.5;
+    }
+    40% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  /* 輸入區 */
+  .composer {
+    flex: 0 0 auto;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    padding: 8px 10px 10px;
+    background: rgba(248, 250, 252, 0.98);
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .layout.dark-mode .composer {
+    background: #020617;
+    border-color: #4b5563;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.6);
+  }
+
+  /* 附檔列 */
+  .attach-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .chips {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+  .chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.7);
+    background: rgba(255, 255, 255, 0.96);
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chip.clear {
+    cursor: pointer;
+    font-weight: 600;
+    background: rgba(239, 246, 255, 0.9);
+  }
+
+  /* file input 隱藏 */
+  .file-input-hidden {
+    display: none;
+  }
+
+  /* 底部輸入 + 送出 */
+  .form-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .input {
+    flex: 1;
+    resize: none;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.7);
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      sans-serif;
+    background: #ffffff;
+    color: #0f172a;
+  }
+  .input:focus {
+    outline: none;
+    border-color: rgba(37, 99, 235, 0.8);
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+  }
+  .layout.dark-mode .input {
+    background: #020617;
+    color: #e5e7eb;
+    border-color: #4b5563;
+  }
+  .layout.dark-mode .input::placeholder {
+    color: #6b7280;
+  }
+
+  /* 按鈕共用樣式 */
+  .btn {
+    border-radius: 999px;
+    border: 1px solid transparent;
+    padding: 0 14px;
+    height: 34px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.1s ease,
+      transform 0.05s ease;
+  }
+
+  /* 基本 primary（給一般情境使用，保留藍底白字） */
+  .btn.primary {
+    background: linear-gradient(135deg, var(--primary), #1d4ed8);
+    color: #ffffff;
+    border-color: #1d4ed8;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  }
+
+  /* Composer 的送出按鈕（亮色模式）：白底＋深灰字 */
+  button.btn.primary.send-btn {
+    background: #ffffff;
+    color: #111827;
+    border-color: #93c5fd;
+    box-shadow: 0 3px 8px rgba(59, 130, 246, 0.25);
+  }
+  button.btn.primary.send-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: #ffffff;
+    border-color: #1d4ed8;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  }
+  /* disabled 狀態仍維持深灰字，只降低透明度 */
+  button.btn.primary.send-btn:disabled {
+    color: #111827;
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 暗色模式下：藍底白字 */
+  .layout.dark-mode button.btn.primary.send-btn,
+  .layout.dark-mode button.btn.primary.send-btn:hover {
+    background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+    color: #f9fafb;
+    border-color: #1d4ed8;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  }
+
+  .btn.primary:hover {
+    background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    transform: translateY(-0.5px);
+  }
+  .btn.primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn.ghost {
+    background: rgba(248, 250, 252, 0.95);
+    border-color: rgba(148, 163, 184, 0.7);
+  }
+  .btn.ghost:hover {
+    background: rgba(229, 231, 235, 0.9);
+  }
+  .layout.dark-mode .btn.ghost {
+    background: #020617;
+    border-color: #4b5563;
+    color: #e5e7eb;
+  }
+  .layout.dark-mode .btn.ghost:hover {
+    background: #0b1120;
+  }
+  .btn.xs {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .btn.block {
+    width: 100%;
+  }
+
+  .only-mobile {
+    display: none;
+  }
+
+  @media (max-width: 860px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 280px;
+      max-width: 80%;
+      height: 100%;
+      z-index: 20;
+      transform: translateX(-100%);
+      transition:
+        transform 0.2s ease-out,
+        box-shadow 0.2s ease-out;
+      box-shadow: none;
+    }
+    .sidebar.hidden {
+      transform: translateX(-100%);
+      box-shadow: none;
+    }
+    .sidebar:not(.hidden) {
+      transform: translateX(0);
+      box-shadow: 8px 0 18px rgba(15, 23, 42, 0.45);
+    }
+
+    .main {
+      position: relative;
+    }
+
+    .only-mobile {
+      display: inline-flex;
+    }
+  }
+
+  @media (min-width: 861px) {
+    .sidebar.hidden {
+      transform: translateX(0);
+    }
+  }
+
+  /* 桌機：左右中間黑線 */
+  @media (min-width: 861px) {
+    .sidebar {
+      border-right: none;
+      box-shadow: 2px 0 0 #000 inset;
+    }
+  }
+
+  /* ===== 全域：阻止整頁滾動，只讓左右欄自己滾 ===== */
+  :global(html),
+  :global(body),
+  :global(#app) {
+    height: 100%;
+    overflow: hidden;
+  }
+  </style>
