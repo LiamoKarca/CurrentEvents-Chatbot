@@ -218,6 +218,7 @@ data/processed/news_merge/_shards
 
 # 忽略其他特定目錄
 backend/data/processed/news_merge/rag_storage_id/
+backend/data/account/
 
 # 保持 .gitkeep 檔案被追蹤
 # 只要父目錄沒有被忽略，這條規則就會生效

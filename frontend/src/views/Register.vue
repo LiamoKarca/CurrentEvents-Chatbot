@@ -4,7 +4,10 @@
     <div class="bg"></div>
 
     <main class="card">
-      <h1 class="brand">💬 ChatBot</h1>
+      <h1 class="brand">
+        <img src="/favicon.ico" alt="芒狗時事標誌" class="brand-icon" />
+        <span>芒狗時事</span>
+      </h1>
       <h2 class="title">建立新帳號</h2>
 
       <form class="form" @submit.prevent="onReg">
@@ -62,33 +65,38 @@ async function onReg() {
 
 <style scoped>
 :root {
-  --bg: #0b1220;
-  --card: #ffffff;
-  --text: #0f172a;
-  --muted: #64748b;
-  --primary: #2563eb;
-  --danger: #dc2626;
+  --bg: #fff9eb;
+  --bg-accent: #fff2cc;
+  --card: #fffdf7;
+  --text: #5c3b00;
+  --muted: #a0772a;
+  --primary: #f4b400;
+  --primary-weak: #ffe193;
+  --danger: #d65329;
+  --border: #f3d6a2;
+  --input-bg: #fff6de;
 }
 
 .auth-page {
   position: relative;
   min-height: 100vh;
   display: flex;
-  align-items: center;          /* 垂直置中 */
-  justify-content: center;      /* 水平置中 */
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   overflow: hidden;
+  background: var(--bg);
 }
 
-/* 柔和漸層（與 Login 同調性） */
 .bg {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(1200px 600px at 10% -10%, #c7d2fe33, transparent 60%),
-    radial-gradient(900px 500px at 90% 10%, #a7f3d033, transparent 60%),
-    radial-gradient(1000px 700px at 50% 120%, #fbcfe833, transparent 60%),
-    linear-gradient(180deg, #f8fafc, #eef2ff 40%, #e0f2fe 100%);
+    radial-gradient(1200px 600px at 10% -10%, rgba(255, 210, 112, 0.45), transparent 60%),
+    radial-gradient(900px 500px at 90% 10%, rgba(255, 246, 196, 0.6), transparent 60%),
+    radial-gradient(1000px 700px at 50% 120%, rgba(255, 185, 122, 0.45), transparent 65%),
+    linear-gradient(180deg, #fff7df, #ffe8aa 40%, #ffd36f 100%);
+  filter: saturate(105%);
   z-index: 0;
 }
 
@@ -96,48 +104,68 @@ async function onReg() {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 420px;
-  padding: 28px 26px;
+  max-width: 480px;
+  padding: 40px 48px;
   border-radius: 16px;
   background: var(--card);
   color: var(--text);
   box-shadow:
-    0 10px 30px rgba(15, 23, 42, 0.12),
-    0 2px 10px rgba(15, 23, 42, 0.06);
-  border: 1px solid #e5e7eb;
+    0 16px 40px rgba(199, 145, 48, 0.15),
+    0 2px 12px rgba(92, 59, 0, 0.08);
+  border: 1px solid var(--border);
 }
 
 .brand {
-  margin: 0 0 6px;
+  margin: 0 auto 12px;
   font-size: 20px;
   font-weight: 800;
-  color: #0f172a;
+  letter-spacing: 0.2px;
+  color: var(--text);
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
+
+.brand-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(92, 59, 0, 0.2);
+}
+
 .title {
   margin: 0 0 20px;
   font-size: 18px;
   font-weight: 700;
-  color: #1f2937;
+  color: #744400;
   text-align: center;
 }
 
-.form { display: grid; gap: 14px; }
+.form {
+  display: grid;
+  gap: 18px;
+}
 .field { display: grid; gap: 8px; }
-.field > span { font-size: 13px; color: var(--muted); }
+.field > span {
+  font-size: 13px;
+  color: var(--muted);
+}
 .field input {
   width: 100%;
   height: 42px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  color: #0f172a;
+  padding: 0 18px;
+  border-radius: 14px;
+  border: 2px solid rgba(244, 180, 0, 0.5);
+  background: var(--input-bg);
+  color: var(--text);
   outline: none;
+  box-sizing: border-box;
 }
 .field input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px rgba(244, 180, 0, 0.25);
 }
 
 .btn {
@@ -153,10 +181,11 @@ async function onReg() {
   transition: transform .02s ease, box-shadow .2s ease, background .2s ease;
 }
 .btn.primary {
-  background: var(--primary);
-  color: #fff;
-  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.25);
+  background: linear-gradient(135deg, #ffd35c, #f4b400);
+  color: #5c3b00;
+  box-shadow: 0 10px 20px rgba(244, 180, 0, 0.35);
 }
+.btn.primary:hover { transform: translateY(-1px); }
 .btn:disabled { opacity: .6; cursor: not-allowed; }
 
 .err {
@@ -172,9 +201,15 @@ async function onReg() {
   text-align: center;
 }
 .link {
-  color: var(--primary);
+  color: #c47800;
   text-decoration: none;
   font-weight: 700;
 }
 .link:hover { text-decoration: underline; }
+
+@media (max-width: 520px) {
+  .card {
+    padding: 32px 24px;
+  }
+}
 </style>

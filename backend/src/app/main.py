@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .api.v1.routes_chat import router as chat_router  # 相對匯入，確保套件化路徑正確
+from .api.v1.routes_summary import router as summary_router
 from backend.src.app.routers import auth as auth_router
 from backend.src.app.routers import user_chat as user_chat_router
 
@@ -42,6 +43,7 @@ def healthz():
 
 # 掛載聊天 API
 app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
+app.include_router(summary_router, prefix="/api/v1", tags=["summary"])
 
 # 掛載路由
 app.include_router(auth_router.router)

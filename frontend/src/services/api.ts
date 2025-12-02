@@ -122,4 +122,13 @@ export const api = {
       return req(`/api/v1/chats/${chatId}`, { method: "DELETE" });
     },
   },
+
+  summary: {
+    async highlights(range: "daily" | "weekly" = "daily", limit = 3) {
+      const params = new URLSearchParams();
+      params.set("range", range);
+      params.set("limit", String(limit));
+      return req(`/api/v1/highlights?${params.toString()}`);
+    },
+  },
 };

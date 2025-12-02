@@ -1,6 +1,12 @@
   <!-- utf-8-sig -->
   <template>
-    <div class="layout" :class="{ 'dark-mode': isDark }">
+    <div
+      class="layout"
+      :class="{
+        'dark-mode': isDark,
+        'sidebar-collapsed': sidebarHidden && !isNarrowViewport,
+      }"
+    >
       <!-- 左側：會話清單 -->
       <aside
         class="sidebar"
@@ -9,7 +15,10 @@
         :aria-hidden="sidebarHidden"
       >
         <header class="side-head">
-          <div class="brand">💬 ChatBot</div>
+          <div class="brand">
+            <img class="brand-icon" src="/favicon.ico" alt="芒狗時事標誌" />
+            <span>芒狗時事</span>
+          </div>
           <div class="side-head-actions">
             <button
               class="btn ghost xs"
@@ -23,8 +32,8 @@
             </button>
             <button
               class="btn ghost xs"
-              @click="refreshList"
-              :disabled="loadingList"
+              @click="refreshAll"
+              :disabled="loadingList || loadingHighlights"
               title="重整清單"
             >
               重整
@@ -38,6 +47,86 @@
             ＋ 新對話
           </button>
         </section>
+
+    <!-- 熱門事件卡片 -->
+    <section
+      class="side-highlights"
+      :class="{ collapsed: highlightsCollapsed }"
+    >
+      <button
+        class="side-highlights-head"
+        type="button"
+        @click="toggleHighlightsPanel"
+        :aria-expanded="!highlightsCollapsed"
+        aria-controls="side-highlights-body"
+      >
+        <div class="side-highlights-label">
+          <span class="label">今日熱門事件三則</span>
+          <p
+            v-if="highlightOverview && !highlightsCollapsed"
+            class="overview"
+          >
+            {{ highlightOverview }}
+          </p>
+        </div>
+        <span class="side-highlights-toggle" aria-hidden="true">
+          {{ highlightsCollapsed ? "＋" : "－" }}
+        </span>
+      </button>
+      <transition name="collapse">
+        <div
+          v-show="!highlightsCollapsed"
+          id="side-highlights-body"
+          class="side-highlights-body"
+        >
+          <div v-if="loadingHighlights" class="muted small">
+            載入熱門事件中…
+          </div>
+          <div v-else-if="highlightError" class="muted small">
+            {{ highlightError }}
+          </div>
+          <button
+            v-for="item in highlights"
+            :key="item.id"
+            class="highlight-card"
+            :class="{ active: expandedHighlightId === item.id }"
+            type="button"
+            @click="toggleHighlight(item.id)"
+          >
+            <div class="title">{{ item.title }}</div>
+            <div class="meta">
+              <span>{{ item.source || "未知來源" }}</span>
+              <span v-if="item.published_at">
+                · {{ formatHighlightDate(item.published_at) }}
+              </span>
+            </div>
+            <p v-if="expandedHighlightId === item.id" class="summary">
+              {{ item.llm_summary || item.snippet || "暫無摘要" }}
+            </p>
+            <div
+              v-if="expandedHighlightId === item.id"
+              class="highlight-actions"
+            >
+              <button
+                class="btn ghost xs"
+                type="button"
+                @click.stop="askHighlight(item)"
+              >
+                ↗️ 聊聊
+              </button>
+              <button
+                class="btn ghost xs"
+                type="button"
+                @click.stop="openHighlightLink(item)"
+                :disabled="!item.link"
+              >
+                🔗 詳情
+              </button>
+            </div>
+          </button>
+        </div>
+      </transition>
+    </section>
 
         <!-- 左側中段：歷史清單 -->
         <section class="side-list">
@@ -83,17 +172,24 @@
         </footer>
       </aside>
 
+      <div
+        v-if="isNarrowViewport && !sidebarHidden"
+        class="sidebar-mask"
+        @click="closeSidebar"
+        aria-hidden="true"
+      ></div>
+
       <!-- 右側：聊天主畫面 -->
       <main class="main">
         <header class="topbar">
           <button
-            class="btn ghost xs only-mobile"
+            class="btn ghost xs sidebar-switch"
             @click="toggleSidebar"
             :aria-expanded="!sidebarHidden"
-            aria-label="切換側欄"
-            title="切換側欄"
+            :aria-label="sidebarHidden ? '展開側欄' : '收合側欄'"
+            :title="sidebarHidden ? '展開側欄' : '收合側欄'"
           >
-            ☰
+            {{ sidebarHidden ? "☰" : "⮜" }}
           </button>
           <div class="top-title">
             <strong>{{ currentTitle || "新對話" }}</strong>
@@ -190,6 +286,7 @@
             <!-- 下方：文字輸入 + 送出 -->
             <div class="form-row">
               <textarea
+                ref="composerInput"
                 v-model="inputText"
                 class="input"
                 :placeholder="loading ? '處理中…' : '輸入問題，Shift+Enter 換行，Enter 送出…'"
@@ -247,18 +344,38 @@
   /** ====== 型別 ====== */
   type Msg = { id: string; role: "user" | "bot"; text: string; time: string };
   type HistoryRow = { chat_id: string; title: string; created_at: string };
+  type HighlightCard = {
+    id: string;
+    title: string;
+    link?: string | null;
+    source?: string | null;
+    published_at?: string | null;
+    snippet?: string | null;
+    llm_summary?: string | null;
+  };
 
   const router = useRouter();
 
   const messages = ref<Msg[]>([]);
   const inputText = ref("");
+  const composerInput = ref<HTMLTextAreaElement | null>(null);
   const loading = ref(false);
   const bodyEl = ref<HTMLElement | null>(null);
   const fileInput = ref<HTMLInputElement | null>(null);
   const selectedFiles = ref<File[]>([]);
+  const highlights = ref<HighlightCard[]>([]);
+  const highlightOverview = ref("");
+  const highlightError = ref<string | null>(null);
+  const loadingHighlights = ref(false);
+  const expandedHighlightId = ref<string | null>(null);
+  const highlightsCollapsed = ref(false);
 
   /** RWD 側欄狀態（手機預設收起） */
-  const sidebarHidden = ref(true);
+  const isNarrowViewport = ref(
+    typeof window !== "undefined" ? window.innerWidth <= 860 : false,
+  );
+  const sidebarHidden = ref(isNarrowViewport.value);
+  const desktopSidebarCollapsed = ref(false);
 
   /** 亮／暗色主題 */
   const isDark = ref(false);
@@ -288,6 +405,12 @@
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatHighlightDate(value: string): string {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleDateString();
   }
 
   function addMessage(role: "user" | "bot", text: string): void {
@@ -322,6 +445,53 @@
   /** 單一檔案刪除（目前模板未用，但保留以後擴充） */
   function removeFile(index: number): void {
     selectedFiles.value.splice(index, 1);
+  }
+
+  async function refreshHighlights(): Promise<void> {
+    loadingHighlights.value = true;
+    highlightError.value = null;
+    try {
+      const data = await api.summary.highlights("daily", 3);
+      highlights.value = data.items || [];
+      highlightOverview.value = data.overview || "";
+      expandedHighlightId.value = highlights.value[0]?.id || null;
+    } catch (err: any) {
+      highlightError.value =
+        err?.message || "熱門事件暫時無法取得，請稍後再試。";
+      highlights.value = [];
+      highlightOverview.value = "";
+      expandedHighlightId.value = null;
+    } finally {
+      loadingHighlights.value = false;
+    }
+  }
+
+  async function refreshAll(): Promise<void> {
+    await Promise.allSettled([refreshList(), refreshHighlights()]);
+  }
+
+  function toggleHighlight(id: string): void {
+    expandedHighlightId.value =
+      expandedHighlightId.value === id ? null : id;
+  }
+
+  function toggleHighlightsPanel(): void {
+    highlightsCollapsed.value = !highlightsCollapsed.value;
+  }
+
+  function askHighlight(item: HighlightCard): void {
+    const question = `我想深入了解「${item.title}」，請提供背景、重要利害關係人與接下來可能的發展。`;
+    clearChat();
+    inputText.value = question;
+    closeSidebar();
+    nextTick(() => {
+      composerInput.value?.focus();
+    });
+  }
+
+  function openHighlightLink(item: HighlightCard): void {
+    if (!item.link) return;
+    window.open(item.link, "_blank", "noopener,noreferrer");
   }
 
   /** ====== 後端：聊天 ====== */
@@ -445,11 +615,30 @@
   }
 
   function toggleSidebar(): void {
-    sidebarHidden.value = !sidebarHidden.value;
+    const next = !sidebarHidden.value;
+    sidebarHidden.value = next;
+    if (!isNarrowViewport.value) {
+      desktopSidebarCollapsed.value = next;
+    }
   }
 
   function closeSidebar(): void {
-    sidebarHidden.value = true;
+    if (isNarrowViewport.value) {
+      sidebarHidden.value = true;
+    }
+  }
+
+  function updateViewportMode(): void {
+    if (typeof window === "undefined") return;
+    const mobile = window.innerWidth <= 860;
+    if (mobile === isNarrowViewport.value) return;
+    isNarrowViewport.value = mobile;
+    if (mobile) {
+      desktopSidebarCollapsed.value = sidebarHidden.value;
+      sidebarHidden.value = true;
+    } else {
+      sidebarHidden.value = desktopSidebarCollapsed.value;
+    }
   }
 
   /** 自動保存（upsert）：第一次建立；其後一律續寫同一 chat_id */
@@ -599,15 +788,18 @@
       isDark.value = false;
     }
 
+    updateViewportMode();
     me.value = await fetchMe();
-    await refreshList();
+    await refreshAll();
     window.addEventListener("keydown", onKeydown);
+    window.addEventListener("resize", updateViewportMode);
     const persisted = sessionStorage.getItem("currentChatId");
     if (persisted && !currentChatId.value) currentChatId.value = persisted;
   });
 
   onUnmounted(() => {
     window.removeEventListener("keydown", onKeydown);
+    window.removeEventListener("resize", updateViewportMode);
   });
   </script>
 
@@ -628,12 +820,17 @@
 
   /* ===== 版面 ===== */
   .layout {
+    --sidebar-width: 300px;
     display: grid;
-    grid-template-columns: 300px 1fr;
+    grid-template-columns: minmax(0, var(--sidebar-width)) 1fr;
     height: 100dvh;
     height: 100vh;
     background: var(--bg);
     position: relative;
+  }
+
+  .layout.sidebar-collapsed {
+    --sidebar-width: 0px;
   }
 
   .layout.dark-mode {
@@ -658,6 +855,10 @@
     background: var(--panel);
     box-shadow: 2px 0 4px rgba(15, 23, 42, 0.05);
     max-height: 100%;
+    width: var(--sidebar-width);
+    transition:
+      width 0.2s ease,
+      opacity 0.15s ease;
   }
 
   /* 讓側欄內部本身可滾動，而不是整頁滾動 */
@@ -673,8 +874,18 @@
     gap: 8px;
   }
   .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 800;
     letter-spacing: 0.2px;
+    white-space: nowrap;  /* 不換行顯示「芒狗時事」 */
+  }
+
+  .brand-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
   }
   .side-head-actions {
     display: inline-flex;
@@ -701,6 +912,118 @@
     color: #f9fafb;
     border-color: #1d4ed8;
     box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  }
+
+  .side-highlights {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(148, 163, 184, 0.1);
+  }
+  .side-highlights.collapsed {
+    padding-bottom: 6px;
+  }
+  .layout.dark-mode .side-highlights {
+    background: rgba(96, 165, 250, 0.08);
+  }
+  .side-highlights-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+  }
+  .side-highlights-head:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .side-highlights-toggle {
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .side-highlights-label .label {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .layout.dark-mode .side-highlights-label .label {
+    color: #ffffff;
+  }
+  .side-highlights-label .overview {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .side-highlights-body {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .highlight-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    background: var(--panel);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 0.2s ease,
+      background 0.2s ease;
+  }
+  .highlight-card.active {
+    border-color: var(--primary);
+    background: rgba(37, 99, 235, 0.08);
+  }
+  .layout.dark-mode .highlight-card.active {
+    background: rgba(96, 165, 250, 0.12);
+  }
+  .highlight-card .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .highlight-card .meta {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .highlight-card .summary {
+    font-size: 13px;
+    color: var(--text);
+    margin: 6px 0;
+    line-height: 1.4;
+  }
+  .highlight-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .highlight-actions .btn {
+    flex: 1;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .muted.small {
+    font-size: 12px;
+  }
+  .collapse-enter-active,
+  .collapse-leave-active {
+    overflow: hidden;
+    transition: max-height 0.18s ease, opacity 0.18s ease;
+  }
+  .collapse-enter-from,
+  .collapse-leave-to {
+    max-height: 0;
+    opacity: 0;
+  }
+  .collapse-enter-to,
+  .collapse-leave-from {
+    max-height: 400px;
+    opacity: 1;
   }
 
   /* 中段清單：自身滾動 */
@@ -1151,9 +1474,18 @@
   .btn.block {
     width: 100%;
   }
+  .sidebar-switch {
+    width: 34px;
+    padding: 0;
+    font-size: 16px;
+  }
 
-  .only-mobile {
-    display: none;
+  .sidebar-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 15;
   }
 
   @media (max-width: 860px) {
@@ -1184,18 +1516,26 @@
       box-shadow: 8px 0 18px rgba(15, 23, 42, 0.45);
     }
 
+    .side-head {
+      flex-direction: column;      /* 改成上下排 */
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .side-head-actions {
+      width: 100%;
+      justify-content: flex-start; /* 按鈕從左到右排 */
+      flex-wrap: wrap;             /* 不夠寬就自動換行 */
+      gap: 6px;
+    }
+
+    .side-head-actions .btn.xs {
+      padding: 0 8px;              /* 手機時按鈕窄一點 */
+      font-size: 11px;
+    }
+
     .main {
       position: relative;
-    }
-
-    .only-mobile {
-      display: inline-flex;
-    }
-  }
-
-  @media (min-width: 861px) {
-    .sidebar.hidden {
-      transform: translateX(0);
     }
   }
 
@@ -1204,6 +1544,12 @@
     .sidebar {
       border-right: none;
       box-shadow: 2px 0 0 #000 inset;
+    }
+    .sidebar.hidden {
+      opacity: 0;
+      pointer-events: none;
+      border-right: none;
+      box-shadow: none;
     }
   }
 
