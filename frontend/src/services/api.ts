@@ -95,6 +95,15 @@ export const api = {
     async me() {
       return req("/api/v1/auth/me");
     },
+
+    async firebaseLogin(idToken: string) {
+      const r = await req("/api/v1/auth/firebase-login", {
+        method: "POST",
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      if (r?.access_token) setToken(r.access_token);
+      return r;
+    },
   },
 
   chats: {

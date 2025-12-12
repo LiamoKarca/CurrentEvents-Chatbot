@@ -15,9 +15,16 @@ app = FastAPI(title="RAG Chatbot (FastAPI + OpenAI Vector Store)")
 # ✅ CORS：允許前端的預檢請求（OPTIONS），避免 405
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # 如需限制，改成你的前端網址
-    allow_credentials=True,
-    allow_methods=["*"],          # 包含 OPTIONS
+    allow_origins=[
+        "https://currentevents-chatbot.web.app",
+        "https://currentevents-chatbot.firebaseapp.com",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

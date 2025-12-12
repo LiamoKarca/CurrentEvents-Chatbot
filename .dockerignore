@@ -1,0 +1,30 @@
+# 忽略 Python 快取與虛擬環境
+__pycache__/
+*.pyc
+venv/
+.venv/
+.env
+.env.*
+
+# 忽略 Git 與 CI 設定
+.git/
+.github/
+.gitignore
+
+# 整個前端目錄
+frontend/
+
+# 忽略其他本地產物
+*.log
+
+# 忽略設定檔
+.yaml
+.gcloudignore
+
+# 忽略後端特定資料夾
+backend/data/
+backend/src/knowledge_base_operation/
+
+# Webdriver Manager 快取
+.wdm-cache/
+.wdm/

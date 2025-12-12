@@ -10,9 +10,13 @@ from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel, Field
 
-from backend.src.app.routers.auth import get_current_user
-from backend.src.app.services.file_store import list_chats, load_chat, save_chat, upsert_chat
-from backend.src.app.services.file_delete import delete_chat as svc_delete_chat
+from .auth import get_current_user
+from ..services.firestore_store import (
+    delete_chat as delete_chat_doc,
+    list_chats,
+    load_chat,
+    upsert_chat,
+)
 
 router = APIRouter(prefix="/api/v1/chats", tags=["chats"])
 
@@ -69,8 +73,7 @@ def load_chat_api(chat_id: str, username: str = Depends(get_current_user)) -> Di
 @router.delete("/{chat_id}")
 def delete_chat_record(chat_id: str, username: str = Depends(get_current_user)):
     """刪除目前使用者的一筆聊天紀錄（JSON + 索引列）。"""
-    meta = svc_delete_chat(username, chat_id)
-    # JSON 與 index 皆未刪除 → 視為不存在
-    if not (meta["json_removed"] or meta["index_removed"]):
+    meta = delete_chat_doc(username, chat_id)
+    if not meta.get("deleted"):
         raise HTTPException(status_code=404, detail="chat not found")
     return JSONResponse({"ok": True, "meta": meta})

@@ -11,6 +11,7 @@
 """
 
 import io
+import logging
 import os
 import time
 from pathlib import Path
@@ -20,8 +21,11 @@ from dotenv import load_dotenv
 from fastapi import UploadFile
 from openai import OpenAI
 
+from .firestore_store import load_chat, upsert_chat
 from .memory_service import MemoryService
 from .retriever_service import RetrieverService
+
+logger = logging.getLogger(__name__)
 
 # 讀取 .env（OPENAI_API_KEY / OPENAI_CHAT_MODEL / OPENAI_VECTOR_STORE_IDS 等）
 load_dotenv()
@@ -52,6 +56,8 @@ SEARCHABLE_DOCS = {
 }
 IMAGE_LIKE = {".png", ".jpg", ".jpeg", ".webp"}
 
+HistoryMessage = Dict[str, str]
+
 
 def _ext(name: str) -> str:
     """取得副檔名（含點），若沒有則回空字串。"""
@@ -65,20 +71,23 @@ class ChatService:
 
     def __init__(
         self,
-        memory: MemoryService,
         retriever: RetrieverService,
+        upload_tracker: Optional[MemoryService] = None,
         client: Optional[OpenAI] = None,
+        max_context_turns: int = 10,
     ):
         """初始化服務。
 
         Args:
-            memory: 對話記憶服務。
             retriever: 檢索服務（提供 file_search 所需之 vector_store_ids）。
+            upload_tracker: 僅用於追蹤使用者本次會話上傳的檔案 id（清理用），不再用於對話上下文。
             client: OpenAI SDK 用戶端，預設從環境變數建立。
+            max_context_turns: 提供給 LLM 的歷史輪數上限（user/assistant 合計 2*N）。
         """
-        self.memory = memory
         self.retriever = retriever
         self.client = client or OpenAI()
+        self.uploads = upload_tracker or MemoryService(max_turns=max_context_turns)
+        self.max_context_messages = max_context_turns * 2
         # 僅使用專案內指定的系統提示詞：backend/src/app/prompts/system/bot.md
         # 注意：目前檔案位於 services/，因此需回到上一層再進入 prompts/
         bot_md_path = (Path(__file__).parents[1] / "prompts" / "system" / "bot.md").resolve()
@@ -86,6 +95,73 @@ class ChatService:
             self._bot_instructions = bot_md_path.read_text(encoding="utf-8-sig")
         except Exception:
             self._bot_instructions = ""
+
+    # ----------------- Firestore 對話記錄 -----------------
+    def _load_history_from_firestore(
+        self, user_id: str, chat_id: Optional[str]
+    ) -> Tuple[Optional[str], List[HistoryMessage], Optional[str]]:
+        """讀取 Firestore 內的歷史訊息（同一 chat_id 為一個 Session）。"""
+        resolved_chat_id = chat_id or None
+        history: List[HistoryMessage] = []
+        title: Optional[str] = None
+
+        if not user_id:
+            return resolved_chat_id, history, title
+
+        try:
+            doc = load_chat(user_id, chat_id) if chat_id else None
+            if doc:
+                resolved_chat_id = doc.get("chat_id", chat_id)
+                title = doc.get("title")
+                for msg in doc.get("messages", []) or []:
+                    if not isinstance(msg, dict):
+                        continue
+                    role = (msg.get("role") or "").strip()
+                    content = msg.get("content") or ""
+                    if role not in {"user", "assistant", "system"}:
+                        continue
+                    if not isinstance(content, str):
+                        continue
+                    history.append({"role": role, "content": content})
+        except Exception as exc:
+            logger.warning("Failed to load chat history for %s/%s: %s", user_id, chat_id, exc)
+
+        return resolved_chat_id, history, title
+
+    def _limit_history_for_context(self, history: List[HistoryMessage]) -> List[HistoryMessage]:
+        """僅保留最新 N 則訊息作為模型上下文，避免 prompt 過長。"""
+        if self.max_context_messages and self.max_context_messages > 0:
+            return history[-self.max_context_messages:]
+        return history
+
+    def _build_responses_input(
+        self, system_text: str, history: List[HistoryMessage], user_message: str
+    ) -> List[Dict[str, Any]]:
+        """組出 Responses API 可接受的 input messages。"""
+        msgs: List[Dict[str, Any]] = [
+            {"role": "system", "content": [{"type": "input_text", "text": system_text}]}
+        ]
+        for msg in history:
+            content = msg.get("content", "")
+            role = msg.get("role", "user")
+            if not content:
+                continue
+            content_type = "output_text" if role == "assistant" else "input_text"
+            msgs.append({"role": role, "content": [{"type": content_type, "text": content}]})
+        msgs.append(
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_message}],
+            }
+        )
+        return msgs
+
+    def _derive_title(self, existing_title: Optional[str], user_message: str) -> Optional[str]:
+        """若前端未提供 title，使用第一句話當標題。"""
+        if existing_title:
+            return existing_title
+        hint = (user_message or "").strip()
+        return hint[:20] if hint else None
 
     # ----------------- 工具：Responses 輸出整理 -----------------
     def _format_response_text(self, response) -> str:
@@ -126,58 +202,44 @@ class ChatService:
             return False
 
     # ----------------- 文字聊天（Web + File Search） -----------------
-    def ask(self, user_id: str, user_message: str) -> Dict[str, Any]:
-        """處理純文字聊天：使用 Responses + web_search + file_search。
+    def ask(
+        self,
+        user_id: str,
+        user_message: str,
+        chat_id: Optional[str] = None,
+        title: Optional[str] = None,
+        top_k: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """純文字聊天：上下文一律取自 Firestore 的 messages。"""
+        user_message = (user_message or "").strip()
+        if not user_message:
+            raise ValueError("user_message is required")
 
-        策略：
-        1) 使用 `bot.md` 作為系統規範（含站點限制等）。
-        2) 啟用 `web_search`（官方 hosted tool）。  # noqa
-        3) 同時啟用 `file_search`，向量庫 ID 由 retriever 提供（.env 或自動偵測最新）。  # noqa
-        4) 將模型輸出中的 `annotations` 萃取為網址與檔案來源清單。
-
-        Returns:
-            dict：包含 `answer`（文字）與 `raw.response_id`。
-        """
-        self.memory.add(user_id, "user", user_message)
+        chat_id, history, existing_title = self._load_history_from_firestore(user_id, chat_id)
+        history_for_model = self._limit_history_for_context(history)
 
         # 僅使用 bot.md 作為系統提示詞，不再拼接任何內建規則或模板
         system_text = (self._bot_instructions or "")
 
-        # ----------------------------------------------------------------------
-        # 解決 Web Search 未觸發的問題。
-        # bot.md 中的 "優先使用 file_search" 指令會讓模型偷懶 (找到即停止)。
-        # 在程式碼中 "動態修正" 這個指令，強迫它 "同時" 使用兩種工具。
-        # ----------------------------------------------------------------------
-        system_text = system_text.replace("優先使用本地向量庫與上傳檔案（file_search）。", "必須同時使用「本地向量庫 (file_search)」和「網路檢索 (web_search)」來進行交叉查核。", 1)
+        # 解決 Web Search 未觸發的問題：強迫同時使用 web_search + file_search
+        system_text = system_text.replace(
+            "優先使用本地向量庫與上傳檔案（file_search）。",
+            "必須同時使用「本地向量庫 (file_search)」和「網路檢索 (web_search)」來進行交叉查核。",
+            1,
+        )
 
         # 準備工具：web_search + file_search（若 retriever 有可用 vector stores）
+        if top_k:
+            self.retriever.max_results = top_k
         tools: List[Dict[str, Any]] = [{"type": "web_search"}]
         fs_tools = self.retriever.build_tools()
         if fs_tools:
             tools.extend(fs_tools)
 
-        # 官方：Responses 直接傳 tools，API 會自動決定如何檢索與引用
-        # - web_search: https://platform.openai.com/docs/guides/tools-web-search
-        # - file_search: https://cookbook.openai.com/examples/file_search_responses
         response = self.client.responses.create(
             model=OPENAI_CHAT_MODEL,
             tools=tools,
-            input=[
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": system_text}],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            # 只把使用者輸入原封不動交給模型，其餘規範皆由 bot.md 決定
-                            "text": user_message,
-                        }
-                    ],
-                },
-            ],
+            input=self._build_responses_input(system_text, history_for_model, user_message),
         )
 
         answer_text = self._format_response_text(response)
@@ -187,12 +249,42 @@ class ChatService:
         if not fs_tools:
             raw["file_search"] = "（檢索未啟用）目前沒有可用的 Vector Store。請在 .env 設定 OPENAI_VECTOR_STORE_IDS，或建立向量庫後再試。"
 
-        self.memory.add(user_id, "assistant", answer_text)
-        return {"answer": answer_text, "raw": raw}
+        updated_history: List[HistoryMessage] = history + [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": answer_text},
+        ]
+        title_hint = self._derive_title(title or existing_title, user_message)
+        chat_meta = upsert_chat(username=user_id, messages=updated_history, chat_id=chat_id, title=title_hint)
+        final_chat_id = chat_meta.get("chat_id", chat_id)
+        final_title = chat_meta.get("title", title_hint)
+
+        return {"answer": answer_text, "raw": raw, "chat_id": final_chat_id, "title": final_title, "meta": chat_meta}
+
+    def ask_with_retrieval(
+        self,
+        user_id: str,
+        user_message: str,
+        chat_id: Optional[str] = None,
+        title: Optional[str] = None,
+        top_k: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """預留與前端相容的路由，實際邏輯同 ask（可覆寫 max_results）。"""
+        return self.ask(
+            user_id=user_id,
+            user_message=user_message,
+            chat_id=chat_id,
+            title=title,
+            top_k=top_k,
+        )
 
     # ----------------- 附件聊天（沿用 Assistants，支援可檢索附件） -----------------
     async def ask_with_attachments(
-        self, user_id: str, user_message: str, files: List[UploadFile]
+        self,
+        user_id: str,
+        user_message: str,
+        files: List[UploadFile],
+        chat_id: Optional[str] = None,
+        title: Optional[str] = None,
     ) -> Dict[str, Any]:
         """處理文字 + 影像/文件上傳（暫沿用 Assistants 流程）。
 
@@ -203,7 +295,8 @@ class ChatService:
 
         參考：Assistants + attachments（file_search）官方示例。  # noqa
         """
-        self.memory.add(user_id, "user", user_message or "")
+        chat_id, history, existing_title = self._load_history_from_firestore(user_id, chat_id)
+        history_for_model = self._limit_history_for_context(history)
 
         text_snippets: List[Tuple[str, str]] = []
         file_ids_for_search: List[str] = []
@@ -230,7 +323,7 @@ class ChatService:
             file_id = file_resp.id
 
             # 登記以便 /memory/clear 刪除
-            self.memory.register_upload(user_id, file_id)
+            self.uploads.register_upload(user_id, file_id)
 
             # 分流：可檢索文件 vs 影像
             if ext in SEARCHABLE_DOCS:
@@ -253,16 +346,24 @@ class ChatService:
         # 可檢索附件（file_search）
         attachments = [{"file_id": fid, "tools": [{"type": "file_search"}]} for fid in file_ids_for_search]
 
-        # 使用現有 Assistant（平台端須已啟 file_search，才能檢索 attachments）
-        thread = self.client.beta.threads.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": content_blocks,
-                    **({"attachments": attachments} if attachments else {}),
-                }
-            ]
+        # 先將歷史訊息推入 thread，最後再附上本輪提問 + 附件
+        thread_messages: List[Dict[str, Any]] = []
+        for msg in history_for_model:
+            content = msg.get("content") or ""
+            role = msg.get("role") or "user"
+            if not content:
+                continue
+            thread_messages.append({"role": role, "content": [{"type": "text", "text": content}]})
+        thread_messages.append(
+            {
+                "role": "user",
+                "content": content_blocks,
+                **({"attachments": attachments} if attachments else {}),
+            }
         )
+
+        # 使用現有 Assistant（平台端須已啟 file_search，才能檢索 attachments）
+        thread = self.client.beta.threads.create(messages=thread_messages)
         run = self.client.beta.threads.runs.create(
             thread_id=thread.id, assistant_id=OPENAI_ASSISTANT_ID
         )
@@ -286,13 +387,28 @@ class ChatService:
                         answer_text = c.text.value
                         break
 
-        self.memory.add(user_id, "assistant", answer_text)
-        return {"answer": answer_text, "raw": {"thread_id": thread.id, "run_id": run.id, "status": status}}
+        user_text_for_history = (user_message or "").strip() or "（內容見附件）"
+        updated_history: List[HistoryMessage] = history + [
+            {"role": "user", "content": user_text_for_history},
+            {"role": "assistant", "content": answer_text},
+        ]
+        title_hint = self._derive_title(title or existing_title, user_text_for_history)
+        chat_meta = upsert_chat(username=user_id, messages=updated_history, chat_id=chat_id, title=title_hint)
+        final_chat_id = chat_meta.get("chat_id", chat_id)
+        final_title = chat_meta.get("title", title_hint)
+
+        return {
+            "answer": answer_text,
+            "raw": {"thread_id": thread.id, "run_id": run.id, "status": status},
+            "chat_id": final_chat_id,
+            "title": final_title,
+            "meta": chat_meta,
+        }
 
     # ----------------- 檔案清理 -----------------
     def cleanup_user_uploads(self, user_id: str) -> Dict[str, Any]:
         """刪除某使用者於本服務期間上傳到 OpenAI Files 的所有檔案。"""
-        file_ids = self.memory.pop_uploads(user_id)
+        file_ids = self.uploads.pop_uploads(user_id)
         ok, fail = [], []
         for fid in file_ids:
             (ok if self._delete_file_safe(fid) else fail).append(fid)
@@ -300,7 +416,7 @@ class ChatService:
 
     def cleanup_all_uploads(self) -> Dict[str, List[str]]:
         """刪除所有使用者已登記的檔案。"""
-        all_ids = self.memory.pop_all_uploads()
+        all_ids = self.uploads.pop_all_uploads()
         result: Dict[str, List[str]] = {}
         for uid, ids in all_ids.items():
             ok: List[str] = []
